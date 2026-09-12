@@ -1,0 +1,7 @@
+external/
+data/
+models/
+*.npz
+*.mp4
+__pycache__/
+*.pyc
