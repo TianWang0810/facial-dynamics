@@ -66,3 +66,33 @@ checked before scaling up.
 
 Results are highly consistent across platforms, indicating good
 cross-platform reliability of the codebase.
+
+## Issue 3: git push/pull fails silently due to VSCode's GIT_ASKPASS hijack
+
+Symptom: git pull over https fails with "Authentication failed", preceded
+by a benign-looking warning: "Missing or invalid credentials. Error:
+connect ENOENT /run/user/.../vscode-git-*.sock". Manually configuring
+credential.helper store had no effect.
+
+Diagnosis: Checked echo $GIT_ASKPASS and env | grep -i git, which revealed
+VSCode Remote-SSH had set GIT_ASKPASS to point at its own askpass.sh
+script, communicating back to the local VSCode window over an IPC socket.
+That socket was stale/unreachable in this session, so every Git credential
+request silently failed before ever reaching a normal terminal prompt --
+explaining why credential.helper store appeared to have no effect (Git
+never got far enough to use it).
+
+Root Cause: VSCode Remote-SSH injects GIT_ASKPASS (and related
+VSCODE_GIT_ASKPASS_* variables) into every terminal session it opens, to
+support its own GUI credential-prompt UI. When that IPC channel is broken,
+Git silently receives an empty/invalid credential instead of falling back
+to a terminal prompt.
+
+Fix: unset GIT_ASKPASS VSCODE_GIT_ASKPASS_NODE VSCODE_GIT_ASKPASS_MAIN
+before running git pull/push, forcing Git to fall back to a standard
+terminal password prompt.
+
+Takeaway: When a GUI-integrated terminal (VSCode, and likely similar tools)
+silently breaks a CLI credential flow, check for injected environment
+variables (GIT_ASKPASS, SSH_ASKPASS, etc.) before assuming the credential
+configuration itself is wrong.
