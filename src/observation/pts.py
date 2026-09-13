@@ -5,7 +5,7 @@ Reusable core logic; CLI entrypoint is in scripts/run_observation.py
 import av
 
 
-def analyze_video(mp4_path: str) -> dict:
+def read_stream_timing(mp4_path: str) -> dict:
     container = av.open(mp4_path)
     video_stream = container.streams.video[0]
     time_base = video_stream.time_base
@@ -19,6 +19,21 @@ def analyze_video(mp4_path: str) -> dict:
             continue
         pts_list_sec.append(float(frame.pts * time_base))
     container.close()
+
+    return {"pts_sec": pts_list_sec, "fps_declared": fps_declared, "width": width, "height": height}
+
+
+def extract_pts(mp4_path: str) -> list:
+    """Real per-frame PTS in seconds. The Dynamics layer differentiates against these
+    rather than frame_idx / fps; video_metadata.json only keeps aggregate PTS stats."""
+    return read_stream_timing(mp4_path)["pts_sec"]
+
+
+def analyze_video(mp4_path: str) -> dict:
+    timing = read_stream_timing(mp4_path)
+    pts_list_sec = timing["pts_sec"]
+    fps_declared = timing["fps_declared"]
+    width, height = timing["width"], timing["height"]
 
     n_frames = len(pts_list_sec)
     issues = []
