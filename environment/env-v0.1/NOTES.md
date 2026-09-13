@@ -1,5 +1,60 @@
 # Environment Notes — env-v0.1
 
+## Files in This Directory: What Locks and What Doesn't
+
+| File | Platform | Role |
+|------|----------|------|
+| `conda-lock.yml` | **linux-64 only** | **The lock file.** Exact versions + build strings + hashes. This is what recreates the HPC environment. |
+| `environment-linux-64.yml` | linux-64 | Source spec conda-lock consumes: top-level deps only, human-editable. |
+| `environment.yml` | osx-arm64 | Historical macOS export. Reference only — see warning below. |
+
+### environment.yml is NOT a reproducibility guarantee
+
+`environment.yml` is a declarative `--no-builds` export: a human-readable list of
+package names and versions with **no build strings and no hashes**. Re-solving it
+against conda-forge on a different day can yield different builds — or different
+versions entirely, since transitive dependencies are not pinned at all. It
+documents intent; it does not reproduce an environment.
+
+Additionally, **this particular `environment.yml` was exported from the local
+macOS box** (note `prefix: /opt/anaconda3/envs/talkvid`). It pins osx-arm64-only
+packages (`libcxx`, `libopenvino-arm-cpu-plugin`, `libintl-devel`) and
+macOS-resolved versions that are wrong for Linux — most visibly `ffmpeg=6.1.2`,
+where HPC actually runs 9.0.1. It **cannot be solved for linux-64 at all**;
+conda-lock fails with `fontconfig ... requires libuuid >=2.42.2, but none of the
+providers can be installed`. Do not point tooling at it for HPC work.
+
+### conda-lock.yml is the real lock
+
+Generated from `environment-linux-64.yml`, whose top-level pins were taken from
+the environment actually running on AICR, so the lock reproduces that environment
+rather than a fresh guess. Verified build-for-build against the live env
+(`ffmpeg-9.0.1-gpl_hc1c51de_902`, `python-3.10.21-h267e890_0_cpython`,
+`libstdcxx-16.2.0-h934c35e_4`, ...). 149 conda + 36 pip packages, every one with
+a hash, zero osx-arm64 entries.
+
+Recreate the HPC environment with:
+
+```bash
+conda-lock install --name talkvid conda-lock.yml
+```
+
+Regenerate after editing `environment-linux-64.yml` (run on a compute node, not
+the login node):
+
+```bash
+conda-lock lock --file environment-linux-64.yml -p linux-64
+```
+
+### macOS is deliberately not locked
+
+Local macOS is used only to prototype and run the pipeline. It is **not** a
+reproducibility target, and nothing in env-v0.1 pins it. Do not assume that
+recreating this spec on macOS gives you a matching environment — it will not, and
+several pins here (the uncapped ffmpeg in particular) are known to be wrong for
+macOS. If macOS reproducibility is ever needed, it requires its own separate
+lock, solved and validated independently.
+
 ## Minimal Dependency Set
 
 Do NOT use the top-level `requirements.txt` from the TalkVid repository as-is.
