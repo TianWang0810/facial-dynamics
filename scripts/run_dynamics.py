@@ -8,19 +8,17 @@ Per design doc section 3 the Dynamics layer is derived on demand and never
 persisted, so this script deliberately writes no per-frame output; only the
 summary is written, and only when --report_json is given.
 
-Real per-frame PTS are read back from the source mp4 via the Observation layer
-(src/observation/pts.py): video_metadata.json keeps only aggregate PTS stats
-(first/last/min/max gap), not the per-frame array, so --clips_dir is required
-to differentiate against real timestamps instead of assuming a constant fps.
+Real per-frame PTS come from the pts_sec array in video_metadata.json, so no
+source mp4 is re-decoded and timing is never reconstructed as frame_idx / fps.
+A video_metadata.json produced before pts_sec existed will be rejected with a
+message telling you to re-run run_observation.py.
 
 Usage:
     python scripts/run_dynamics.py \
         --geometry_parquet <dir>/geometry.parquet \
-        --video_metadata <dir>/video_metadata.json \
-        --clips_dir <dir_of_downloaded_clips>
+        --video_metadata <dir>/video_metadata.json
 """
 import argparse
-import glob
 import json
 import os
 import sys
@@ -32,7 +30,6 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO_ROOT)
 
 from src.dynamics.derive import summarize_dynamics
-from src.observation.pts import extract_pts
 
 SIGNAL_SHAPES = {"landmarks": (-1, 3), "blendshapes": (-1,)}
 
@@ -40,8 +37,7 @@ SIGNAL_SHAPES = {"landmarks": (-1, 3), "blendshapes": (-1,)}
 def main():
     parser = argparse.ArgumentParser(description="Recompute Dynamics-layer derivatives and print a validation summary.")
     parser.add_argument("--geometry_parquet", required=True, help="Path to geometry.parquet produced by run_geometry.py")
-    parser.add_argument("--video_metadata", required=True, help="Path to video_metadata.json produced by run_observation.py")
-    parser.add_argument("--clips_dir", required=True, help="Directory containing the source mp4 clips (searched recursively) for real per-frame PTS.")
+    parser.add_argument("--video_metadata", required=True, help="Path to video_metadata.json produced by run_observation.py; supplies the per-frame pts_sec array.")
     parser.add_argument("--signal", choices=sorted(SIGNAL_SHAPES), default="landmarks", help="Which geometry column to differentiate.")
     parser.add_argument("--clip_id", action="append", default=None,
                         help="Restrict to clip ids starting with this prefix; repeatable. "
@@ -68,22 +64,21 @@ def main():
             print(f"  SKIPPED: no entry for {clip_id} in {args.video_metadata}")
             continue
 
-        matches = glob.glob(os.path.join(args.clips_dir, "**", meta["file"]), recursive=True)
-        if not matches:
-            print(f"  SKIPPED: source clip {meta['file']} not found under {args.clips_dir}")
+        if not meta.get("pts_sec"):
+            print(f"  SKIPPED: no pts_sec array for {clip_id} -- regenerate {os.path.basename(args.video_metadata)} with run_observation.py")
             continue
 
         try:
-            timestamps = np.asarray(extract_pts(matches[0]), dtype=np.float64)
+            timestamps = np.asarray(meta["pts_sec"], dtype=np.float64)
             clip_df = df[df["clip_id"] == clip_id].sort_values("frame_idx")
             values = np.array(clip_df[args.signal].tolist(), dtype=np.float64)
             values = values.reshape((len(clip_df),) + SIGNAL_SHAPES[args.signal])
 
             if len(timestamps) != len(clip_df):
-                print(f"  SKIPPED: {len(clip_df)} geometry frames vs {len(timestamps)} decoded PTS -- refusing to guess the alignment")
+                print(f"  SKIPPED: {len(clip_df)} geometry frames vs {len(timestamps)} PTS entries -- refusing to guess the alignment")
                 continue
             if meta.get("n_frames_decoded") not in (None, len(timestamps)):
-                print(f"  WARNING: video_metadata reports {meta['n_frames_decoded']} frames, decoded {len(timestamps)}")
+                print(f"  WARNING: video_metadata reports n_frames_decoded={meta['n_frames_decoded']} but pts_sec has {len(timestamps)} entries")
 
             summary = summarize_dynamics(values, timestamps)
             summary["clip_id"] = clip_id

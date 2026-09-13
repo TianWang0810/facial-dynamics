@@ -1,7 +1,12 @@
 # Engineering Log: video_metadata.json does not retain per-frame PTS
 
-Format: Symptom -> Diagnosis -> Root Cause -> Impact -> Fix -> Open Question ->
-Generalizable Takeaway.
+Format: Symptom -> Diagnosis -> Root Cause -> Impact -> Interim Workaround ->
+Resolution -> Future Work -> Generalizable Takeaway.
+
+Status: RESOLVED. video_metadata.json now publishes the complete per-frame PTS
+array. A workaround (re-decoding the mp4 behind a --clips_dir argument) was
+committed first and then replaced; it is kept in this record because the reason
+it was discarded is the useful part.
 
 Recorded while implementing the Dynamics layer (src/dynamics/derive.py).
 
@@ -27,8 +32,9 @@ array is roughly 1600 floats per clip and Observation itself only needs the
 aggregates -- but it was made without a downstream consumer that needed
 per-frame timing. Dynamics is the first such consumer.
 
-Impact: Currently latent, not active. Every clip in the validation sample
-happens to be constant-frame-rate, so min_frame_gap == max_frame_gap and
+Impact (as assessed at the time of discovery): Latent, not active. Every clip in
+the validation sample happens to be constant-frame-rate, so
+min_frame_gap == max_frame_gap and
 reconstructing timestamps as frame_idx / fps would coincidentally give the right
 answer. The defect only bites on a genuine variable-frame-rate or re-encoded
 clip, where video_metadata.json alone is insufficient to compute Dynamics
@@ -46,33 +52,84 @@ A dropped frame does not produce a small numerical error; it fabricates a
 doubling of facial velocity that never happened. Keep this case in the test
 suite -- it is the most direct evidence for the section 1 rule.
 
-Fix (a workaround, not a repair): Added read_stream_timing() and extract_pts()
-to src/observation/pts.py, exposing the per-frame PTS array that pts.py already
-computed. analyze_video() was refactored to call read_stream_timing() so its
-behaviour is unchanged. scripts/run_dynamics.py consequently requires a third
-argument, --clips_dir, and re-decodes the source mp4 to recover real timestamps;
-video_metadata.json is still used, for clip_id -> filename resolution and a
-frame-count cross-check.
+Interim Workaround (commit decf995, since replaced): read_stream_timing() and
+extract_pts() were added to src/observation/pts.py to expose the per-frame array
+pts.py already computed, and scripts/run_dynamics.py took a third argument,
+--clips_dir, re-decoding each source mp4 to recover real timestamps.
 
-The claim that the refactor is behaviour-preserving is backed by
-tests/test_pts_refactor_equivalence.py, which loads the pre-refactor
-analyze_video() out of git at the pinned parent commit, runs it and the current
-version over the same clips, and asserts exact equality on all 12 returned
-fields. Comparing only video_metadata.json would have been insufficient: that
-file carries 6 of the 12 fields, so is_monotonic, max_frame_gap, min_frame_gap,
-issues and quality_label would have gone unchecked. Result at the time of
-writing: 5 clips x 12 fields = 60 exact-equality comparisons, all identical.
+This worked but was wrong in two ways. It cost a full extra decode pass per clip,
+and more importantly it broke the property that Observation's published output is
+self-contained: the Dynamics layer now depended on the raw clips staying
+available, which contradicts the raw/derived separation in design doc section
+5.3. It also left design doc section 1.1 -- which lists per-frame PTS as an
+Observation deliverable -- unsatisfied while appearing to be addressed.
 
-Open Question: This is a workaround. Re-decoding the mp4 costs a full extra
-decode pass per clip and, more importantly, breaks the property that
-Observation's published output is self-contained -- Dynamics now depends on the
-raw clips remaining available, which conflicts with the raw/derived separation
-in design doc section 5.3. Making video_metadata.json self-contained means
-adding a per-frame PTS array to it, which is a schema change to a published
-Observation artifact and therefore triggers observation-v0.2 under the
-"versions are append-only, never edited" rule (section 6.4). Deferred
-deliberately: it should be batched with any other Observation schema changes
-rather than spending a version bump on this alone.
+Resolution: video_metadata.json now carries the full per-frame array as a
+pts_sec field. analyze_video() returns pts_sec, merge.py publishes it, and
+run_dynamics.py reads it directly; --clips_dir and the now-dead extract_pts()
+were both removed. No mp4 is re-decoded anywhere in the Dynamics path.
+
+The decision was to fix this immediately rather than defer it to observation-v0.2.
+Three reasons, in order of weight:
+
+  1. Per-frame PTS is a design doc section 1.1 deliverable. This was never a new
+     feature request, it was an unimplemented part of the Observation layer's
+     specified output. Deferring it would have meant versioning around a known
+     gap in the spec.
+  2. The "versions are append-only, never edited" rule (section 6.4) protects
+     *published* dataset versions. No such version exists yet: Observation output
+     still lives in ~/facial-dynamics/data/, and the versioned
+     datasets/observation/v0.1/ layout of section 5.3 is still [TARGET]. There is
+     no observation-v0.1 artifact whose immutability this could violate.
+  3. The change cost is currently near zero -- 4 validated clips, one user, no
+     downstream consumer besides the Dynamics layer being written alongside it.
+     That cost only ever grows.
+
+Verified by an A/B against the workaround: the pre-change run_dynamics.py was run
+from a git worktree at decf995 with --clips_dir, the current version from the
+working tree, over the same four clips. The two JSON reports are byte-identical
+(matching md5). Separately, the stored pts_sec was compared value-by-value with a
+fresh decode of each mp4 under exact float equality -- 1625 values, all identical
+-- confirming that publishing PTS through JSON is lossless.
+
+tests/test_observation_schema.py (formerly test_pts_refactor_equivalence.py)
+guards the result. It still loads analyze_video() out of git at the pinned
+baseline and asserts all 12 inherited fields are unchanged, and now additionally
+asserts that pts_sec is the *only* added field, that it is internally consistent
+with the aggregates derived from it, and that it never leaks into quality.json,
+which must stay a lightweight summary. Checking video_metadata.json alone would
+have been insufficient for the first claim: that file carries 6 of the 12 fields,
+so is_monotonic, max_frame_gap, min_frame_gap, issues and quality_label would
+have gone unchecked.
+
+Future Work -- migrate per-frame PTS into geometry.parquet at scale:
+
+JSON is the right container for 4 clips and the wrong one for 1244 hours. Storing
+pts_sec costs ~20 bytes per frame as indented JSON text; measured on the current
+sample, video_metadata.json grew from 1,316 to 34,196 bytes (26x) for 1625
+frames. Extrapolated to the full TalkVid corpus at 25fps that is roughly 2.3 GB,
+and the real problem is not disk but access: JSON must be parsed in its entirety
+to read a single clip's metadata, so per-clip reads degrade linearly with corpus
+size.
+
+  Trigger: when parsing video_metadata.json becomes a measurable cost in the
+  processing pipeline -- concretely, when the file exceeds the low hundreds of MB,
+  or when per-clip metadata reads start showing up in profiling. Not before; do
+  not pre-optimise this for the current sample size.
+
+  Plan: move the per-frame array into geometry.parquet, which already has exactly
+  one row per frame, as a pts_sec column. Binary float64 storage costs ~8 bytes
+  per frame instead of ~20, columnar layout allows reading timestamps without
+  touching the landmark/blendshape columns, and row-group filtering allows lazy
+  per-clip access instead of whole-file parsing. video_metadata.json then reverts
+  to aggregates only.
+
+  Note: at that point the per-frame timing has effectively become the timeline.json
+  deliverable already assigned to member C in design doc section 4, so the two
+  should be reconciled rather than implemented twice.
+
+  This is a storage-layout migration, not a correctness change. The rule it must
+  preserve is the one this whole entry is about: real PTS, never frame_idx / fps.
 
 Generalizable Takeaway: A layer that computes a rich intermediate and publishes
 only a summary silently constrains every future consumer downstream of it. The
@@ -83,3 +140,11 @@ with its reasoning -- and when the sample data cannot distinguish a correct
 implementation from an incorrect one (here, constant-frame-rate clips hiding
 the whole problem), the validating test has to be synthetic and adversarial on
 purpose, because real-data validation will pass either way.
+
+A second takeaway from how this was resolved: a workaround that satisfies the
+immediate consumer can still leave the specification unmet, and it is worth
+re-asking whether the "proper" fix is actually expensive before deferring it on
+principle. Here the version-bump rule was invoked against a dataset version that
+did not exist yet, and the real cost of fixing it properly was one re-run over
+four clips. Deferral rules are meant to stop churn in published artifacts, not to
+protect unimplemented parts of the spec.

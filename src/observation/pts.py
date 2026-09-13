@@ -1,5 +1,8 @@
 """
 Extract real per-frame PTS (presentation timestamps) and check monotonicity/gaps/drops.
+The complete per-frame array is returned as pts_sec and published in
+video_metadata.json (design doc section 1.1), because the Dynamics layer
+differentiates against it rather than reconstructing time as frame_idx / fps.
 Reusable core logic; CLI entrypoint is in scripts/run_observation.py
 """
 import av
@@ -21,12 +24,6 @@ def read_stream_timing(mp4_path: str) -> dict:
     container.close()
 
     return {"pts_sec": pts_list_sec, "fps_declared": fps_declared, "width": width, "height": height}
-
-
-def extract_pts(mp4_path: str) -> list:
-    """Real per-frame PTS in seconds. The Dynamics layer differentiates against these
-    rather than frame_idx / fps; video_metadata.json only keeps aggregate PTS stats."""
-    return read_stream_timing(mp4_path)["pts_sec"]
 
 
 def analyze_video(mp4_path: str) -> dict:
@@ -52,6 +49,7 @@ def analyze_video(mp4_path: str) -> dict:
 
     return {
         "file": mp4_path.split("/")[-1],
+        "pts_sec": pts_list_sec,
         "resolution": f"{width}x{height}",
         "fps_declared": fps_declared,
         "n_frames_decoded": n_frames,
