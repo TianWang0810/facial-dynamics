@@ -6,8 +6,8 @@ name: talkvid
 # the versions currently running on the AICR cluster. Transitive dependencies
 # are resolved by conda-lock and recorded with exact builds in conda-lock.yml.
 #
-# Do NOT use environment.yml for this purpose -- that file is a full macOS
-# (osx-arm64) export and cannot solve on linux-64. See NOTES.md.
+# linux-64 is the only locked platform. macOS is prototyping-only and is
+# deliberately not tracked here. See NOTES.md.
 channels:
   - conda-forge
 platforms:
