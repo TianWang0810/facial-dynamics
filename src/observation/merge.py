@@ -1,6 +1,12 @@
 """
 Merge PTS and face-detection results into video_metadata.json and quality.json,
 matching the schema defined in design doc sections 1.1/1.2.
+
+video_metadata.json carries the complete per-frame PTS array (pts_sec) so that
+downstream layers have real timestamps without re-decoding the source mp4; see
+docs/engineering_log/video_metadata_pts_retention.md. quality.json deliberately
+keeps only the aggregate PTS statistics and must stay lightweight -- both records
+are built field by field below, so the array never leaks into the quality report.
 """
 
 
@@ -16,6 +22,7 @@ def merge_results(pts_results: list, face_results: list) -> tuple:
             "file": filename, "resolution": pts.get("resolution"), "fps_declared": pts.get("fps_declared"),
             "n_frames_decoded": pts.get("n_frames_decoded"), "duration_from_pts_sec": pts.get("duration_from_pts"),
             "first_pts_sec": pts.get("first_pts"), "last_pts_sec": pts.get("last_pts"),
+            "pts_sec": pts.get("pts_sec", []),
         })
         pts_issues = pts.get("issues", [])
         pts_ok = pts.get("is_monotonic", False) and len(pts_issues) == 0
