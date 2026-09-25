@@ -1,0 +1,296 @@
+{
+  "schema_version": "2.0.0",
+  "description": "Authoritative layout of the per-frame feature vector. This file is the single source of truth for four consumers that must not drift apart: (1) data extraction in the Geometry layer, (2) model input / ground truth assembly, (3) decoder output heads, (4) loss computation. Read it; do not restate it. src/schema/feature_vector.py loads this file at import and derives every constant from it, including the total width -- never hard-code 63, because a channel can be disabled and the vector becomes narrower.",
+  "dtype": "float32",
+  "layout": "per frame, channels concatenated in the order listed below; slices are half-open [start, end)",
+  "normalization_note": "Every channel declares input_normalization and target_normalization separately, because they are NOT always the same transform. input_normalization shapes the tensor fed to the encoder; target_normalization defines the space the decoder reconstructs in and the loss is computed in. Where the two differ, the per-channel projection layer absorbs the discrepancy on the input side -- that is precisely what it is for.",
+  "channels": [
+    {
+      "name": "blendshape",
+      "dim": 52,
+      "track": "A",
+      "source_column": "blendshapes",
+      "quality_column": "conf_blendshapes",
+      "units": "unitless coefficient",
+      "input_normalization": {
+        "method": "unit_range",
+        "range": [
+          0.0,
+          1.0
+        ],
+        "optional_symmetric_map": {
+          "range": [
+            -1.0,
+            1.0
+          ],
+          "enabled_by": "scripts/run_features.py --symmetric_blendshape",
+          "scope": "ENCODER INPUT TENSOR ONLY",
+          "note": "A convenience rescale for models that prefer zero-centred inputs. It is NOT a global switch: enabling it must not change the reconstruction target. The per-channel projection layer sees the rescaled input and absorbs the factor, so nothing downstream needs to know."
+        }
+      },
+      "target_normalization": {
+        "method": "unit_range",
+        "range": [
+          0.0,
+          1.0
+        ],
+        "note": "Reconstruction targets are ALWAYS the raw [0,1] coefficients, whether or not the optional symmetric input map is enabled. This is what keeps the sigmoid head's output range matched to its target range; if the target were rescaled to [-1,1] while the head stayed sigmoid, the loss would be computed between two different spaces and could never reach zero."
+      },
+      "decoder_head": {
+        "activation": "sigmoid",
+        "output_dim": 52,
+        "output_range": [
+          0.0,
+          1.0
+        ]
+      },
+      "projection_dim": 64,
+      "loss": {
+        "position_weight": 1.0,
+        "velocity_weight": 1.0,
+        "acceleration_weight": 1.0
+      },
+      "note": "Blink (eyeBlinkLeft / eyeBlinkRight) and mouth aperture (jawOpen and friends) are already encoded here. Do NOT add separate channels for them -- a duplicated signal double-counts in the loss and lets the two copies disagree.",
+      "enabled": true,
+      "declared_slice": [
+        0,
+        52
+      ]
+    },
+    {
+      "name": "headpose_translation",
+      "dim": 3,
+      "track": "B",
+      "source_column": "headpose_t",
+      "quality_column": "conf_headpose",
+      "units": "MediaPipe camera-space units, clip-baseline-relative",
+      "input_normalization": {
+        "method": "clip_mean_subtracted",
+        "reference": "mean head position over tracked frames of the clip",
+        "note": "Unbounded. The magnitude differs from the other channels by orders of magnitude, which is exactly why per-channel projection before concatenation is mandatory."
+      },
+      "target_normalization": {
+        "method": "clip_mean_subtracted",
+        "note": "Identical to the input transform -- the decoder reconstructs in the same baseline-relative space it was given. headpose_t_raw is retained in geometry.parquet so the subtraction stays invertible when a prediction has to be placed back in camera space."
+      },
+      "decoder_head": {
+        "activation": "identity",
+        "output_dim": 3
+      },
+      "projection_dim": 64,
+      "loss": {
+        "position_weight": 1.0,
+        "velocity_weight": 1.0,
+        "acceleration_weight": 1.0
+      },
+      "enabled": true,
+      "declared_slice": [
+        52,
+        55
+      ]
+    },
+    {
+      "name": "headpose_rotation_6d",
+      "dim": 6,
+      "track": "B",
+      "source_column": "headpose_r6",
+      "quality_column": "conf_headpose",
+      "units": "first two columns of the rotation matrix",
+      "input_normalization": {
+        "method": "none",
+        "note": "Unbounded by construction. NOT a quaternion and NOT Euler angles: both introduce discontinuities (double cover, gimbal lock / wrap-around) that the velocity and acceleration loss terms would amplify into spurious spikes."
+      },
+      "target_normalization": {
+        "method": "none",
+        "space": "raw 6-vector, pre-orthonormalization",
+        "note": "The loss is computed against the raw 6 numbers, NOT against a Gram-Schmidt-orthonormalized rotation. See loss_contract.rotation_6d_loss_space for why."
+      },
+      "decoder_head": {
+        "activation": "identity",
+        "output_dim": 6,
+        "post_process": "gram_schmidt_orthonormalization",
+        "post_process_applies_at": "downstream consumption only (rendering an avatar / driving a robot), NOT during training",
+        "note": "The head emits a raw 6-vector and the loss reads it directly. Gram-Schmidt is what turns that vector into a valid rotation matrix when something physical has to be driven by it. See src/geometry/headpose.py:rotation_6d_to_matrix for the reference implementation both sides must match."
+      },
+      "projection_dim": 64,
+      "loss": {
+        "position_weight": 1.0,
+        "velocity_weight": 1.0,
+        "acceleration_weight": 1.0
+      },
+      "enabled": true,
+      "declared_slice": [
+        55,
+        61
+      ]
+    },
+    {
+      "name": "gaze",
+      "dim": 2,
+      "track": "C",
+      "source_column": [
+        "gaze_pitch",
+        "gaze_yaw"
+      ],
+      "dim_names": [
+        "pitch",
+        "yaw"
+      ],
+      "units": "backend-dependent; see unit_contract",
+      "quality_column": "conf_gaze",
+      "input_normalization": {
+        "method": "zero_mean_per_clip",
+        "optional_tanh_compression": {
+          "enabled_by": "scripts/run_geometry.py --gaze_tanh",
+          "scope": "INPUT AND TARGET, jointly",
+          "limits_rad": [
+            0.6108652381980153,
+            0.8726646259971648
+          ],
+          "note": "Unlike the blendshape symmetric map, this one MUST apply to the target as well, and the asymmetry is deliberate. The gaze head is a tanh bounded at +/- the per-axis limit, so a target lying outside that range is unreachable by construction and would leave an irreducible loss floor. Compressing both sides keeps every target attainable. Requesting it for a backend that does not emit radians raises, rather than dividing a dimensionless ratio by a radian limit.",
+          "requires_unit": "radians"
+        }
+      },
+      "target_normalization": {
+        "method": "zero_mean_per_clip",
+        "note": "Matches the input transform, including the tanh compression when it is enabled -- see the scope field above."
+      },
+      "decoder_head": {
+        "activation": "tanh",
+        "output_dim": 2,
+        "scale": [
+          0.6108652381980153,
+          0.8726646259971648
+        ],
+        "scale_dim_names": [
+          "pitch",
+          "yaw"
+        ],
+        "note": "ELEMENT-WISE scale, not a single scalar: output[..., 0] (pitch) is multiplied by scale[0] = 35 degrees and output[..., 1] (yaw) by scale[1] = 50 degrees. The two axes have genuinely different physiological ranges; applying one value to both would distort the aspect ratio of the gaze field."
+      },
+      "projection_dim": 64,
+      "loss": {
+        "position_weight": 1.0,
+        "velocity_weight": 1.0,
+        "acceleration_weight": 1.0
+      },
+      "note": "Extracted independently of track A -- never derived from the eyeLookUp/Down/In/Out blendshape coefficients.",
+      "enabled": true,
+      "declared_slice": [
+        61,
+        63
+      ],
+      "enabled_note": "Set to false for a v0 run that omits gaze -- e.g. when only the uncalibrated iris proxy is available and its unit contract cannot be honoured. The vector then becomes 61-dim and every consumer follows, because nothing hard-codes the width.",
+      "unit_contract": {
+        "external_onnx": "radians, calibrated",
+        "iris_geometry": "dimensionless_iris_offset_proxy -- normalised iris displacement times an uncalibrated gain. Monotonic in gaze angle, usable as a relative signal, NOT an angle. Must never be reported in degrees or radians.",
+        "mixing": "output from the two backends is not the same quantity and must not be pooled as one training target. The active backend and its unit are recorded in geometry_metadata.json.",
+        "axis_order": [
+          "pitch",
+          "yaw"
+        ],
+        "sign_convention": "positive pitch = looking up; positive yaw = looking towards image right"
+      }
+    }
+  ],
+  "sidecar": {
+    "note": "Written alongside the feature tensor, deliberately NOT part of the 63 dimensions.",
+    "quality_mask": {
+      "in_model_input": false,
+      "shape": "per frame, per channel -- one column per entry in `channels`, in the same order",
+      "range": [
+        0.0,
+        1.0
+      ],
+      "columns": [
+        "conf_blendshapes",
+        "conf_headpose",
+        "conf_headpose",
+        "conf_gaze"
+      ],
+      "columns_note": "conf_headpose appearing twice is INTENTIONAL, not a copy-paste error: do not 'fix' it. headpose_translation and headpose_rotation_6d are two halves of a single pose estimate produced by one decomposition of one matrix, so they share one confidence. Splitting them would imply the tracker reports separate reliabilities for translation and rotation, which it does not.",
+      "consumption": {
+        "status": "to be agreed with the modelling team -- the Geometry layer publishes the mask and does not decide how it is used",
+        "transformer": "attention mask: suppress key/value contributions from low-confidence frames",
+        "tcn": "interpolate low-quality frames and keep an is_interpolated flag so the loss can down-weight them"
+      },
+      "calibration": "These are quality PROXIES, not calibrated probabilities. A score of 0.8 does not mean an 80% chance of anything; the scores are monotonic in how trustworthy a frame looks and nothing more.",
+      "distinct_signals": {
+        "observed": "the source frame produced a real detection",
+        "quality": "the [0,1] extractor proxy",
+        "is_gap_filled": "the sample was invented to bridge unobserved time",
+        "is_padding": "the sample exists only to fill a window to fixed length",
+        "note": "stored separately and combined by src/sequence/contract.py:loss_weight(); a single pre-blended mask cannot be taken apart again"
+      }
+    },
+    "landmarks": {
+      "in_model_input": false,
+      "source_column": "landmarks",
+      "dim": 1434,
+      "purpose": "intermediate product of the preprocessing pipeline, quality-check evidence, and fallback source for solving blendshapes if track A is unavailable",
+      "training_loader": "skip this column when loading for training -- it is 1434 floats per frame and no channel consumes it"
+    }
+  },
+  "windowing": {
+    "note": "Applied before the encoder. The contract fixes the DURATION a window covers, not its frame count.",
+    "target_seconds": [
+      0.5,
+      1.0
+    ],
+    "default_target_seconds": 1.0,
+    "frame_count_policy": "computed at runtime as round(target_seconds * grid_hz), never a project-wide constant. grid_hz is the rate of the timeline the windows are actually cut on. In the v0 path that is resampling.default_target_hz, because every clip is put on that one grid before windowing (see `resampling`), so every clip's windows share a frame count. A pipeline that windows WITHOUT resampling uses the clip's own rate measured from the Observation layer's real per-frame PTS -- never a declared fps -- and a 25fps and a 30fps clip then yield 25- and 30-frame windows covering the same 1.0s. Either way the contract is the duration: fixing the frame count instead would make a '30 frame' window mean 1.0s in one clip and 1.2s in another, which is the opposite of what target_seconds asks for.",
+    "min_window_frames": 2,
+    "default_overlap_ratio": 0.5,
+    "packing": "In the v0 resampling path every clip reaches the windowing step on the same grid, so every window has the same frame count and scripts/run_features.py emits a single `features` tensor of shape (n_windows, window_frames, total_dim). Per-length buckets are what a pipeline that windows WITHOUT resampling needs: clips whose computed frame count differs cannot be stacked, and they must then be grouped into one tensor per length rather than forced to a common frame count, which would silently vary the duration. Whichever applies, features_manifest.json records grid.window_frames next to grid.target_hz, so a reader never has to infer the duration from a shape.",
+    "inference": "sliding window with overlap-add blending across the shared region",
+    "tail_policy": "pad the final short window and mark the padded frames with zero quality, so padding can never be mistaken for observed data",
+    "resampling": {
+      "required_for": "models with no explicit time input (TCN v0)",
+      "default_target_hz": 30.0,
+      "rationale": "A TCN assumes evenly spaced samples. Sources arrive at 24-30fps with dropped frames, so v0 resamples onto one grid from real PTS. An engineering choice for this model, not a theoretical requirement -- a model consuming timestamps directly should skip it.",
+      "max_gap_seconds_default": 0.2,
+      "gap_policy": "timelines are split into segments at gaps longer than max_gap_seconds and each segment is resampled independently; nothing is ever interpolated across a gap, and no window may straddle a segment boundary",
+      "gap_unit_note": "configured in SECONDS, not frames: the limit describes how long a face may be unobserved before the motion between the two ends is unknowable, which a frame count would silently change with the source rate",
+      "interpolation_per_channel": {
+        "blendshape": "linear",
+        "headpose_translation": "linear",
+        "gaze": "linear",
+        "headpose_rotation_6d": "rotation-manifold (quaternion nlerp, sign-aligned), NOT element-wise linear on the raw 6-vector -- a linear blend of two 6-vectors leaves the rotation manifold"
+      },
+      "antialiasing": "not applied; np.interp does not filter. For the 24-30 Hz sources this project sees, resampling to 30 Hz is interpolation or a mild decimation. A source above 1.5x the target rate emits a warning naming the alias band rather than being filtered silently.",
+      "provenance": {
+        "is_resampled": "sample sits on the uniform grid rather than an original frame time; normal, not a defect",
+        "is_gap_filled": "sample lies in a stretch with no valid observation; a repair, must be down-weighted",
+        "note": "these are different things and are reported separately"
+      }
+    }
+  },
+  "encoder_contract": {
+    "per_channel_projection": {
+      "required": true,
+      "dim": 64,
+      "rationale": "Channel magnitudes are heterogeneous by orders of magnitude -- blendshapes live in [0,1], head translation can reach tens of units, gaze is a small radian value. Concatenating the raw 63 numbers lets whichever channel happens to be numerically largest dominate the gradient. Each channel gets its own small linear layer to a common width first, then concatenation or summation. This layer is also what makes a differing input_normalization and target_normalization harmless."
+    },
+    "positional_encoding": "relative position encoding, or an architecture with built-in local temporal structure such as a TCN; absolute positional encoding is not required"
+  },
+  "loss_contract": {
+    "stage": "M3 -- verifying that the structural skeleton can compress and reconstruct motion without loss; identity disentanglement and cross-avatar transfer are explicitly out of scope here",
+    "heads": "one per channel, per `decoder_head` above; the decoder never emits an undifferentiated 63-vector",
+    "terms": [
+      "position",
+      "velocity",
+      "acceleration"
+    ],
+    "target_space": "per channel, as declared in target_normalization -- which is NOT always the input space; see normalization_note",
+    "rotation_6d_loss_space": "Raw 6-vector reconstruction loss is the v0 baseline: the head regresses the 6D representation directly, as in Zhou et al. 2019, and the loss compares raw vectors. This is a defensible baseline, NOT the only correct choice -- a loss computed on the Gram-Schmidt-orthonormalized rotation (e.g. geodesic angle) is also valid and may be preferable. What must not happen is reporting a raw-6D difference as a physical angle. Evaluation therefore additionally reports geodesic angular error after orthonormalization; see rotation_evaluation_requirement.",
+    "derivative_note": "Velocity and acceleration are supervision signals only -- they are computed by time-differencing the reconstructed and the reference sequence at loss time, and are never input channels. src/dynamics/derive.py is the reference implementation of that differencing.",
+    "reduction": "per-channel weighted sum into L_recon, weights per `loss` above",
+    "rotation_evaluation_requirement": "Report angular error in degrees on the orthonormalized rotation alongside any raw-6D loss, because raw-6D MSE has no physical unit and two models with equal 6D error can have very different angular error.",
+    "rotation_derivative_naming": "A finite difference of raw 6D values is a representation-space smoothness term. It is NOT angular velocity and must not be labelled as such. v0 does not require rotation acceleration or jerk terms.",
+    "channel_dimension_normalization": "Divide each channel's summed error by its dimension before applying the per-channel weight. Without this, blendshape is 52 of 63 dimensions and dominates purely by count.",
+    "derivative_validity": "A first difference needs two consecutive valid frames, a second difference three, and neither may cross a segment boundary or touch padding. See src/sequence/contract.py:derivative_weights().",
+    "non_finite_policy": "Non-finite values are replaced with a per-channel neutral before the network and masked in the loss. Relying on NaN * 0 is wrong: in IEEE 754 that is NaN and poisons the batch gradient."
+  },
+  "total_dim_note": "total_dim_all_enabled is the width with every channel on. The ACTIVE width is derived from the enabled channels at import and exposed as TOTAL_DIM; slices are recomputed contiguously so disabling a channel leaves no hole. When every channel is enabled the derived slices must equal the declared ones, which is asserted on import.",
+  "total_dim_all_enabled": 63
+}

@@ -93,14 +93,28 @@ fresh decode of each mp4 under exact float equality -- 1625 values, all identica
 -- confirming that publishing PTS through JSON is lossless.
 
 tests/test_observation_schema.py (formerly test_pts_refactor_equivalence.py)
-guards the result. It still loads analyze_video() out of git at the pinned
-baseline and asserts all 12 inherited fields are unchanged, and now additionally
-asserts that pts_sec is the *only* added field, that it is internally consistent
-with the aggregates derived from it, and that it never leaks into quality.json,
-which must stay a lightweight summary. Checking video_metadata.json alone would
-have been insufficient for the first claim: that file carries 6 of the 12 fields,
-so is_monotonic, max_frame_gap, min_frame_gap, issues and quality_label would
-have gone unchecked.
+guards the result. It loads analyze_video() out of git at the pinned baseline and
+asserts that every one of the 12 baseline fields is still accounted for -- 5 under
+the same name, 6 through a recorded rename, and `issues` under the same name with
+a changed representation -- and that their values are unchanged. Every field
+appearing since the baseline is whitelisted by name with the decision behind it,
+so an unwhitelisted addition or a silent disappearance still fails. It further
+asserts that pts_sec is internally consistent with the aggregates derived from it
+and never leaks into quality.json, which must stay a lightweight summary.
+Checking video_metadata.json alone would have been insufficient for the first
+claim: that file carries 6 of the 12 fields, so is_monotonic, max_frame_gap,
+min_frame_gap, issues and quality_label would have gone unchecked.
+
+A later note on that guard. When the renames landed, only the value comparison
+was taught the rename map; the key-set assertion above it still compared the raw
+baseline keys against the same-name list alone, so every rename read as both a
+disappearance and an unexplained addition and the guard raised on any clip. It
+was fixed by matching renames on both sides -- a rename is one decision, not a
+removal plus an addition. The underlying claim was never in doubt once checked by
+hand: all 11 carried-over fields compare equal. The lesson is narrower and worth
+keeping: a guard that is not in whatever the routine "run the tests" command
+happens to be will rot without anyone noticing. This one takes an --input_dir and
+so sits outside the no-argument test scripts, which is exactly why it went stale.
 
 Future Work -- migrate per-frame PTS into geometry.parquet at scale:
 

@@ -41,6 +41,28 @@ EDGE_ORDER = 1
 UNIFORM_STEP_TOL_SEC = 1e-6
 DERIVATIVE_ORDERS = ((1, "velocity"), (2, "acceleration"), (3, "jerk"))
 
+# A derivative's unit is the differentiated signal's own unit per second^order,
+# so it is a property of WHICH geometry column was passed in -- not of this
+# module. summarize_dynamics() previously hard-coded the landmark unit, which
+# labelled a blendshape run (dimensionless coefficients) as eye-distance units.
+# The mapping lives here so the report and anything reading dynamics_report.json
+# share one vocabulary.
+SIGNAL_UNITS = {
+    "landmarks": "canonical eye-distance units per second^order",
+    "blendshapes": "dimensionless ARKit blendshape coefficient per second^order",
+}
+UNSPECIFIED_UNITS = "unspecified: the caller did not name the differentiated signal"
+
+
+def units_for_signal(signal: str = None) -> str:
+    """Unit string for a signal, or an explicit "unspecified" for an unknown one.
+
+    Deliberately not a guess: an unrecognised signal gets a string that says the
+    unit is unknown, rather than the unit of whichever column happens to be the
+    default.
+    """
+    return SIGNAL_UNITS.get(signal, UNSPECIFIED_UNITS)
+
 
 def _differentiate(values: np.ndarray, timestamps: np.ndarray, order: int) -> np.ndarray:
     values = np.asarray(values, dtype=np.float64)
@@ -62,19 +84,19 @@ def _differentiate(values: np.ndarray, timestamps: np.ndarray, order: int) -> np
 
 
 def compute_velocity(values: np.ndarray, timestamps: np.ndarray) -> np.ndarray:
-    """First time derivative of a geometry signal, in canonical units per second.
+    """First time derivative of a geometry signal, in the signal's own units per second.
     Same shape as values; frames 0 and T-1 are one-sided (see module docstring)."""
     return _differentiate(values, timestamps, order=1)
 
 
 def compute_acceleration(values: np.ndarray, timestamps: np.ndarray) -> np.ndarray:
-    """Second time derivative, in canonical units per second squared.
+    """Second time derivative, in the signal's own units per second squared.
     The outermost 2 frames at each end are degraded by repeated one-sided edges."""
     return _differentiate(values, timestamps, order=2)
 
 
 def compute_jerk(values: np.ndarray, timestamps: np.ndarray) -> np.ndarray:
-    """Third time derivative, in canonical units per second cubed.
+    """Third time derivative, in the signal's own units per second cubed.
     The outermost 3 frames at each end are degraded by repeated one-sided edges."""
     return _differentiate(values, timestamps, order=3)
 
@@ -117,11 +139,14 @@ def _magnitude_stats(magnitude: np.ndarray, order: int) -> dict:
     }
 
 
-def summarize_dynamics(values: np.ndarray, timestamps: np.ndarray) -> dict:
+def summarize_dynamics(values: np.ndarray, timestamps: np.ndarray, signal: str = None) -> dict:
     """Validation summary (mean / max / NaN checks) for the first three derivatives.
-    Pure: the same (values, timestamps) always yields the same dict. "interior"
-    statistics exclude the outermost `order` frames at each end, i.e. exactly the
-    frames whose values come from one-sided differences."""
+    Pure: the same (values, timestamps, signal) always yields the same dict.
+    "interior" statistics exclude the outermost `order` frames at each end, i.e.
+    exactly the frames whose values come from one-sided differences.
+
+    `signal` names the geometry column being differentiated and is used only to
+    label the reported units; see units_for_signal()."""
     timestamps = np.asarray(timestamps, dtype=np.float64)
     steps = np.diff(timestamps)
 
@@ -133,7 +158,7 @@ def summarize_dynamics(values: np.ndarray, timestamps: np.ndarray) -> dict:
             "is_uniform": bool(np.ptp(steps) <= UNIFORM_STEP_TOL_SEC),
         },
         "n_nan_frames_input": _nan_frame_count(values),
-        "units": "canonical eye-distance units per second^order",
+        "units": units_for_signal(signal),
     }
     for order, name in DERIVATIVE_ORDERS:
         summary[name] = _magnitude_stats(compute_magnitude(_differentiate(values, timestamps, order)), order)
