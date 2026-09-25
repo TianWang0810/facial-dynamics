@@ -44,19 +44,19 @@ retargeted to the specific target.
 
 ```
             ┌───────────── target adapters (input) ─────────────┐
- real video ──▶ Observation → Geometry → Features                │  ← implemented here
- 3D / games ──▶ direct mapping from ARKit-style blendshapes      │  ← planned
- anime / robots ──▶ native parameters → shared parameters        │  ← planned
-            └───────────────────────┬──────────────────────────┘
+ real video ──▶ Observation → Geometry → Features               │  ← implemented here
+ 3D / games ──▶ direct mapping from ARKit-style blendshapes     │  ← planned
+ anime / robots ──▶ native parameters → shared parameters       │  ← planned
+            └───────────────────────┬───────────────────────────┘
                                     ▼
           shared expression parameters: 63 dims per frame (schemas/geometry.schema.json)
           52 blendshapes · head translation 3 · head rotation 6D · gaze 2
                                     ▼
-   ┌────────────────── semantic layers (multi-level tokens) ──────────────────┐
-   │ L1 atomic       per channel: intensity level + time segments  rules, deterministic │ ✅ implemented
-   │ L2 action       blink / smile / nod … (with duration, intensity)  vocabulary + templates │ 📋 planned
-   │ L3 intent       emotion · scenario · meaning · amplitude (parallel tracks)  generative model │ 📋 planned
-   └──────────────────────────────────┬───────────────────────────────────────┘
+   ┌────────────────── semantic layers (multi-level tokens) ─────────────────────────────────────────────────────┐
+   │ L1 atomic       per channel: intensity level + time segments  rules, deterministic │ ✅ implemented         │
+   │ L2 action       blink / smile / nod … (with duration, intensity)  vocabulary + templates │ 📋 planned       │
+   │ L3 intent       emotion · scenario · meaning · amplitude (parallel tracks)  generative model │ 📋 planned   │
+   └──────────────────────────────────┬──────────────────────────────────────────────────────────────────────────┘
                                       ▼  decode (every layer round-trips fully to L1)
           shared expression parameters ──▶ retargeting (3D / anime / games / robots) ← planned
 ```
