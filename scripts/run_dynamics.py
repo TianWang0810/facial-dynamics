@@ -34,6 +34,17 @@ from src.dynamics.derive import summarize_dynamics
 SIGNAL_SHAPES = {"landmarks": (-1, 3), "blendshapes": (-1,)}
 
 
+def _fmt(value) -> str:
+    """Format a statistic that may legitimately be absent.
+
+    summarize_dynamics() returns None for an interior statistic when the clip is
+    too short to have an interior at that derivative order -- a 5-frame clip has
+    no frames left after excluding 3 at each end for jerk. That is a real, if
+    uninteresting, result and must print rather than crash the whole run.
+    """
+    return "n/a" if value is None else f"{value:.6f}"
+
+
 def main():
     parser = argparse.ArgumentParser(description="Recompute Dynamics-layer derivatives and print a validation summary.")
     parser.add_argument("--geometry_parquet", required=True, help="Path to geometry.parquet produced by run_geometry.py")
@@ -46,7 +57,11 @@ def main():
     args = parser.parse_args()
 
     with open(args.video_metadata, encoding="utf-8") as f:
-        metadata_by_clip = {os.path.splitext(m["file"])[0]: m for m in json.load(f)}
+        # "file" already IS the clip id (path relative to the input root, no
+        # extension). It used to be passed through os.path.splitext, which is a
+        # no-op for ids without a dot and silently truncates ids that contain one
+        # ("..._614.881_634.467" -> "..._614.881_634"), skipping the clip.
+        metadata_by_clip = {m["file"]: m for m in json.load(f)}
 
     df = pd.read_parquet(args.geometry_parquet)
     clip_ids = sorted(df["clip_id"].unique())
@@ -80,7 +95,7 @@ def main():
             if meta.get("n_frames_decoded") not in (None, len(timestamps)):
                 print(f"  WARNING: video_metadata reports n_frames_decoded={meta['n_frames_decoded']} but pts_sec has {len(timestamps)} entries")
 
-            summary = summarize_dynamics(values, timestamps)
+            summary = summarize_dynamics(values, timestamps, signal=args.signal)
             summary["clip_id"] = clip_id
             summary["signal"] = args.signal
             summaries.append(summary)
@@ -99,8 +114,8 @@ def main():
         print(f"  input NaN frames: {s['n_nan_frames_input']}")
         for name in ("velocity", "acceleration", "jerk"):
             d = s[name]
-            print(f"  {name:<12} mean={d['mean']:.6f} max={d['max']:.6f}  "
-                  f"interior mean={d['interior_mean']:.6f} max={d['interior_max']:.6f}  "
+            print(f"  {name:<12} mean={_fmt(d['mean'])} max={_fmt(d['max'])}  "
+                  f"interior mean={_fmt(d['interior_mean'])} max={_fmt(d['interior_max'])}  "
                   f"NaN frames={d['n_nan_frames']} all_finite={d['all_finite']}")
     print(f"\nSummarized {len(summaries)}/{len(clip_ids)} clips (no per-frame data written).")
     if args.report_json:

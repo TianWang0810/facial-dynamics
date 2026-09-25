@@ -1,0 +1,113 @@
+{
+  "rules_version": "1.0.0",
+  "applies_to_schema_version": "2.0.0",
+  "description": "Authoritative rules for the L1 atomic text layer: how one window of the TARGET tensor (features.npz) becomes structured per-channel segment text, and how that text is decoded back. src/semantic/l1.py loads this file at import, validates it, and derives every threshold from it -- no Python file restates an edge or a level value. L1 is rule-driven and deterministic: no statistic is fitted to data, so the same window always produces the same text. Rationale for each choice: docs/decisions/l1_text_codec.md.",
+  "time": {
+    "unit": "seconds relative to the window's first frame, on the uniform grid of features.npz (target_hz)",
+    "interval": "half-open [start, end); a frame k covers [k / hz, (k + 1) / hz)",
+    "decimals": 4,
+    "note": "decode maps a time back to a frame by round(t * hz) and rejects any t that is not within 0.05 frames of a grid point, so an edited interval cannot land between frames silently"
+  },
+  "segmentation": {
+    "method": "run_length_then_min_duration_merge",
+    "min_segment_seconds": 0.1,
+    "steps": [
+      "1. quantize every described frame to a level (per text channel; head_rotation quantizes its three axes jointly as one level tuple)",
+      "2. cut maximal runs of identical level inside each contiguous stretch of described frames; this step alone is exactly lossless with respect to per-frame levels",
+      "3. while some run is shorter than round(min_segment_seconds * hz) frames and has an ELIGIBLE neighbour in the same stretch -- one whose level is within one step of every frame's own level, on every axis -- take the shortest such run (earliest on a tie) and relabel it with that neighbour's level, choosing the smaller summed level distance, then the longer neighbour, then the left one; coalesce equal neighbours. Short runs two or more levels away from both neighbours are real events (a blink onset) and stay",
+      "4. value_hint is the segment mean clipped into the segment level's bin: a merged segment's mean can fall outside its level (a strong blink peak with absorbed moderate shoulders), and the level, which carries the meaning, wins. Unedited text therefore always has its hint inside its level's bin"
+    ],
+    "note": "Step 3 is the only lossy step that segmentation adds on top of quantization. Its cost is measured, not assumed: scripts/l1_report.py compares per-frame levels against segmented levels."
+  },
+  "decode": {
+    "default_source": "refined",
+    "sources": {
+      "refined": "the segment's value_hint when it lies inside the level's bin, else the level's representative. Unedited text keeps its measured intensity; an edited level (whose old hint now sits in another bin) decodes to the new level. The level stays authoritative.",
+      "level": "the level's representative only. Pure-quantization view; used by the report to verify run-length segmentation is lossless.",
+      "value_hint": "the recorded segment mean regardless of level. Audit only."
+    },
+    "smoothing": {
+      "method": "whittaker",
+      "lambda": 2.0,
+      "note": "argmin ||y - x||^2 + lambda ||D2 y||^2 per text channel over each covered stretch; never across an undescribed frame. Rotation is smoothed on its rotation-vector components about the window reference (tangent space), then mapped back by the exponential map. Removes the step artefact of a piecewise-constant decode. method 'none' disables it."
+    },
+    "note": "Measured on the validation clip (docs/decisions/l1_text_codec.md): refined + smoothing cuts blendshape max error 0.53 -> 0.18 and rotation 1.36 -> 0.90 deg mean against level + step, with identical text."
+  },
+  "levels": ["none", "slight", "moderate", "strong"],
+  "signed_label_format": "'none' or '+<level>' / '-<level>'; the sign is the sign of the value, the level is its magnitude bin",
+  "quantizers": {
+    "blendshape": {
+      "signed": false,
+      "units": "unitless [0,1] activation, target space",
+      "edges": [0.05, 0.2, 0.5],
+      "representatives": [0.0, 0.125, 0.35, 0.75],
+      "note": "absolute edges shared by every blendshape, so 'slight' means the same activation for browInnerUp and jawOpen; a per-channel scale fitted to data would make L1 a learned codec. 'none' decodes to exactly 0.0 (no action = zero activation), not to its bin midpoint."
+    },
+    "headpose_translation": {
+      "signed": true,
+      "units": "MediaPipe camera-space units, clip-mean-subtracted (target space)",
+      "edges": [0.1, 0.3, 0.8],
+      "representatives": [0.0, 0.2, 0.55, 1.2]
+    },
+    "headpose_rotation": {
+      "signed": true,
+      "units": "degrees, per component of the rotation vector (axis * angle) of the orthonormalised 6D rotation relative to the window reference (see channels.headpose_rotation_6d.reference)",
+      "edges": [2.0, 6.0, 15.0],
+      "representatives": [0.0, 4.0, 10.5, 22.5],
+      "note": "NOT Euler angles: the rotation vector is one chart of the rotation manifold with no gimbal lock and no axis order; it is reached through a sign-aligned quaternion and mapped back through the exponential map, never element-wise on the 6-vector"
+    },
+    "gaze": {
+      "by_unit": {
+        "dimensionless_iris_offset_proxy": {
+          "signed": true,
+          "units": "dimensionless iris offset proxy, zero-mean per clip -- NOT an angle",
+          "edges": [0.01, 0.03, 0.08],
+          "representatives": [0.0, 0.02, 0.055, 0.12]
+        },
+        "radians": {
+          "signed": true,
+          "units": "radians, zero-mean per clip",
+          "edges": [0.035, 0.105, 0.26],
+          "representatives": [0.0, 0.07, 0.18, 0.39]
+        }
+      },
+      "note": "keyed by the gaze backend's unit from geometry_metadata.json; the two backends are different quantities and never share thresholds"
+    }
+  },
+  "channels": {
+    "blendshape": {
+      "quantizer": "blendshape",
+      "text_names_from": "geometry_metadata.json tracks.A_landmarks_blendshapes.blendshape_names",
+      "exclude": ["_neutral"],
+      "excluded_fill": 0.0,
+      "exclude_note": "_neutral is MediaPipe's placeholder category, measured constant zero; it gets no text and decodes to excluded_fill"
+    },
+    "headpose_translation": {
+      "quantizer": "headpose_translation",
+      "text_names": ["head_tx", "head_ty", "head_tz"]
+    },
+    "headpose_rotation_6d": {
+      "quantizer": "headpose_rotation",
+      "text_name": "head_rotation",
+      "axes": ["x", "y", "z"],
+      "reference": {
+        "method": "window_mean",
+        "options": ["window_mean", "identity"],
+        "decimals": 1,
+        "note": "levels describe the rotation vector of R_ref^T R, where R_ref is the manifold (sign-aligned quaternion) mean over the window's described frames, stored in the window header in degrees at this precision; decode is R = R_ref exp(v). Translation and gaze are baseline-relative in the target tensor and rotation is not, so without a reference the levels spend their range on a static camera-relative posture (measured: a constant ~16 deg about x on the validation clip) instead of on motion. 'identity' restores the absolute description."
+      },
+      "axes_note": "components of the rotation vector in MediaPipe's canonical face frame; no nod/turn/tilt naming is claimed until the sign convention is verified on video"
+    },
+    "gaze": {
+      "quantizer": "gaze",
+      "text_names": ["gaze_pitch", "gaze_yaw"],
+      "sign_convention": "positive pitch = looking up; positive yaw = looking towards image right (schema unit_contract)"
+    }
+  },
+  "masks": {
+    "describable": "a frame is described in a schema channel's text iff src/sequence/contract.py:loss_weight(observed, quality, is_gap_filled, is_padding) > 0 for that channel; everything else is simply absent from the channel's segments",
+    "header_intervals": ["is_padding", "is_gap_filled", "unobserved"],
+    "decode": "the three header interval lists restore is_padding, is_gap_filled and observed exactly; a decoded channel's quality is 1.0 where every one of its text channels covers the frame and 0.0 elsewhere, so loss_weight() on the decoded arrays reproduces the describable mask. The quality PROXY value itself is not a facial attribute and is not carried by the text.",
+    "undescribed_fill": "contract.neutral_vector() (identity 6D for rotation, zero elsewhere)"
+  }
+}
