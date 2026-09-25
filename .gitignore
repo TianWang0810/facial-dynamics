@@ -1,6 +1,10 @@
 external/
 data/
 models/
+
+# Pipeline output: one directory per run, regenerable from the inputs and the
+# recorded revision. Never committed -- geometry.parquet alone is large.
+runs/
 *.npz
 *.mp4
 __pycache__/
