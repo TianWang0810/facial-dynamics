@@ -1,0 +1,37 @@
+{
+  "audio_features_version": "1.0.0",
+  "description": "Authoritative parameters of the audio CONDITIONING sidecar written by the 04_audio stage (scripts/run_audio.py). src/audio/features.py loads this file at import and derives every constant from it. Audio is a conditioning input for models that consume the 63-dim tensor; it is NOT a reconstruction target and is NOT part of schemas/geometry.schema.json's feature vector, so adding it leaves that cross-team contract untouched.",
+  "decode": {
+    "sample_rate": 16000,
+    "channels": "mono (downmix)",
+    "resampler": "libswresample via PyAV av.AudioResampler, s16",
+    "time_source": "each decoded audio frame's own PTS on the container timeline -- the same timeline as the video pts_sec in video_metadata.json, so alignment is by absolute time, never by sample position or an assumed common start",
+    "discontinuity_tolerance_sec": 0.002,
+    "av_duration_tolerance_sec": 0.1,
+    "av_duration_policy": "the video's duration from its own PTS (first frame to last, excluding a final frame reported as tail_frame_gap, plus one median step) is compared with the decoded audio's covered duration; a clip whose two durations differ by more than the tolerance may have its streams misaligned by an unknown amount and gets audio_valid = False everywhere, status av_duration_mismatch. The offset is never guessed. A safeguard: on the 16-clip TalkVid pilot every clip was within 0.06 s (0.03 s after excluding tail-gap frames), and none tripped it.",
+    "sync_check_max_lag_sec": 0.5,
+    "sync_check_note": "diagnostic only, never a gate: cross-correlation of the jawOpen blendshape with audio log energy on a 100 Hz grid, lags limited to a physiologically plausible +/- 0.5 s; a wider search finds spurious peaks at syllable-rhythm periods on 10-30 s clips",
+    "discontinuity_policy": "a jump between consecutive frames' PTS larger than the tolerance is reported per clip and the samples are placed at their own PTS; the uncovered stretch is marked invalid, never filled"
+  },
+  "log_mel": {
+    "win_length": 400,
+    "hop_length": 160,
+    "n_fft": 512,
+    "window": "hann (periodic)",
+    "n_mels": 80,
+    "fmin_hz": 0.0,
+    "fmax_hz": 8000.0,
+    "mel_scale": "htk",
+    "power": 2.0,
+    "log_floor": 1e-10,
+    "frame_time": "frame k is centred at audio_start + (k * hop_length + win_length / 2) / sample_rate",
+    "note": "the common 25 ms / 10 ms / 80-mel front end; 100 frames per second"
+  },
+  "windowing": {
+    "rule": "every features.npz window gets the audio covering [window_time_sec, window_time_sec + window_frames / target_hz), resampled onto that window's own audio grid: frames_per_second * window_seconds log-mel frames and sample_rate * window_seconds waveform samples",
+    "frames_per_second": 100,
+    "store_waveform": true,
+    "waveform_note": "16 kHz int16 per window, kept so a pretrained speech encoder (wav2vec2 / HuBERT, which needs torch and therefore an env-v0.2) can be run later without re-decoding the mp4s",
+    "validity": "audio_valid is false for any audio frame outside the decoded audio's coverage, in a reported discontinuity, or inside a padded video frame; invalid frames hold log_floor (mel) and 0 (waveform) and must be masked, not trusted"
+  }
+}
