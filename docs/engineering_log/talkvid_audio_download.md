@@ -104,3 +104,34 @@ Takeaway: The project's rule "time from real PTS, never declared fps" applies to
 throwaway diagnostic scripts too. Two independent-looking pieces of evidence
 were both artefacts of the analysis: a declared rate, and a lag window wide
 enough to find a periodic false peak.
+
+## Issue 7 (2026-09-26): more speakers without YouTube -- TalkVid-bench from HuggingFace
+
+Symptom: the learning curve of the detail network (`docs/milestones/2026-09-26_detail_net_l2.md`)
+kept improving at 144 train speakers, but YouTube downloads stay blocked by the bot check
+(Issue 5), and I had wrongly listed HDTF as "directly downloadable" (it also ships YouTube links).
+
+Diagnosis: the HuggingFace repo does host real files for TalkVid-bench -- four subsets (age,
+ethnicity, gender, language), 500 records, each clip as `videos/`, `audios/`,
+`videos_crop_512x512/` and `videos_w_audios/<group>/` (video with the audio muxed in). The
+large `data/*.json` files are metadata only. Bench clips are 5.0 s, mostly 1080p, and their
+"Person ID" is empty.
+
+Fix: `scripts/fetch_talkvid.py bench` lists the subsets through the HF tree API, deduplicates
+records by id (a clip can sit in several subsets), skips clips whose YouTube video already
+appears in the existing clips (`--exclude_clips_dir`: 14 of 500), downloads `videos_w_audios`
+into `<output>/yt-<video_id>/`, and writes `bench_manifest.json`. HuggingFace answered HTTP 429
+after roughly 470 files; `_get()` now waits `Retry-After` (else 60 s x attempt) and pauses 1 s
+between files, and a re-run skips files already present.
+
+Result: 486 clips, 375 video ids, 2450 s, in `/scratch/zhao_shur_neu/talkvid/bench_clips/`.
+Combined with the 207 YouTube clips through per-file symlinks in `combined_clips/` (clip ids of
+the old clips are unchanged: they are relative paths).
+
+Limitation, stated so nobody over-reads a split: without a Person ID the speaker key of a bench
+clip is its YouTube video id. One person in several videos counts as several "speakers", and a
+bench person may also be one of the 206 YouTube-download speakers under a different video. A
+split over the combined set is therefore video-disjoint, and only approximately speaker-disjoint.
+
+Takeaway: before concluding a dataset is YouTube-only, list its repository tree; benchmarks are
+often hosted in full even when the training set is metadata only.
