@@ -25,11 +25,20 @@ the Observation layer (per-stream start times, A/V offset).
 Layout: <output>/<person_id>/<video_id>__<start>_<end>.mp4, so
 run_pipeline.py --speaker_from parent_dir yields speaker-disjoint splits.
 
+A third source needs no YouTube at all: TalkVid-bench (four subsets -- age,
+ethnicity, gender, language -- about 500 short clips) is hosted on HuggingFace
+itself, with the audio already muxed in `videos_w_audios/`. Its "Person ID" is
+empty, so the YouTube video id stands in for the speaker (one person per video);
+clips from a video already present in --exclude_clips_dir are skipped so a
+speaker-disjoint split stays disjoint. Layout: <output>/yt-<video_id>/<clip>.mp4.
+
 Usage (on a compute node, with the download env that provides yt-dlp + ffmpeg):
     python scripts/fetch_talkvid.py sample --metadata filtered_video_clips.json \
         --n 2200 --seed 0 --output selection.json
     python scripts/fetch_talkvid.py download --selection selection.json \
         --output /scratch/$USER/talkvid/clips --shard 0 --n_shards 20 --workers 4
+    python scripts/fetch_talkvid.py bench --output /scratch/$USER/talkvid/bench_clips \
+        --exclude_clips_dir /scratch/$USER/talkvid/clips          # HuggingFace only, no yt-dlp
 """
 import argparse
 import json
@@ -147,6 +156,78 @@ def download(args) -> None:
     print(f"shard {args.shard}/{args.n_shards}: log {log_path}")
 
 
+HF_REPO = "https://huggingface.co/datasets/FreedomIntelligence/TalkVid"
+HF_API = "https://huggingface.co/api/datasets/FreedomIntelligence/TalkVid/tree/main"
+BENCH_SUBSETS = ("age", "ethnicity", "gender", "language")
+
+
+def _get(url: str, retries: int = 8) -> bytes:
+    """GET with backoff. HuggingFace answers 429 when requests come too fast: wait as told
+    (Retry-After) or 60 s times the attempt, and never retry faster than that."""
+    import urllib.error
+    import urllib.request
+    for attempt in range(retries):
+        try:
+            with urllib.request.urlopen(url, timeout=120) as response:
+                return response.read()
+        except urllib.error.HTTPError as err:
+            if err.code not in (429, 500, 502, 503, 504) or attempt == retries - 1:
+                raise
+            wait = float(err.headers.get("Retry-After") or 60 * (attempt + 1))
+            print("HTTP %d, waiting %.0f s" % (err.code, wait), flush=True)
+            time.sleep(wait)
+        except OSError:
+            if attempt == retries - 1:
+                raise
+            time.sleep(10 * (attempt + 1))
+
+
+def bench(args) -> None:
+    """Download TalkVid-bench clips (with audio) from HuggingFace, deduplicated and speaker-grouped."""
+    excluded = set()
+    if args.exclude_clips_dir:
+        for _, _, files in os.walk(args.exclude_clips_dir):
+            excluded |= {f[:11] for f in files if f.endswith(".mp4")}  # names start with the 11-char video id
+    records, muxed = {}, {}
+    for subset in BENCH_SUBSETS:
+        tree = json.loads(_get("%s/TalkVid-bench/%s?recursive=true" % (HF_API, subset)))
+        for entry in tree:
+            if entry["type"] == "file" and "/videos_w_audios/" in entry["path"]:
+                muxed[os.path.basename(entry["path"])] = entry["path"]
+        for record in json.loads(_get("%s/resolve/main/TalkVid-bench/%s/test_%s.json" % (HF_REPO, subset, subset))):
+            records.setdefault(record["id"], dict(record, subsets=[]))["subsets"].append(subset)
+    os.makedirs(args.output, exist_ok=True)
+    manifest, counts = [], {"records": len(records), "excluded_same_video": 0, "no_muxed_file": 0, "downloaded": 0, "present": 0}
+    for record_id in sorted(records):
+        record = records[record_id]
+        vid = video_id(record["info"]["Video Link"])
+        name = os.path.basename(record["video-path"])
+        if vid in excluded:
+            counts["excluded_same_video"] += 1
+            continue
+        if name not in muxed:
+            counts["no_muxed_file"] += 1
+            continue
+        target = os.path.join(args.output, "yt-" + vid, name)
+        if os.path.exists(target) and os.path.getsize(target) > 0:
+            counts["present"] += 1
+        else:
+            os.makedirs(os.path.dirname(target), exist_ok=True)
+            data = _get("%s/resolve/main/%s" % (HF_REPO, muxed[name]))
+            with open(target + ".part", "wb") as handle:
+                handle.write(data)
+            os.replace(target + ".part", target)
+            counts["downloaded"] += 1
+            time.sleep(1.0)  # stay well below the host's rate limit
+        manifest.append({"id": record_id, "video_id": vid, "file": os.path.relpath(target, args.output),
+                         "source": muxed[name], "subsets": record["subsets"], "duration": record.get("durations"),
+                         "fps": record.get("fps"), "info": record["info"]})
+    with open(os.path.join(args.output, "bench_manifest.json"), "w", encoding="utf-8") as handle:
+        json.dump({"source": HF_REPO, "license": "CC BY-NC 4.0", "counts": counts,
+                   "speakers": len({m["video_id"] for m in manifest}), "clips": manifest}, handle, indent=1, ensure_ascii=False)
+    print(json.dumps(counts), "speakers:", len({m["video_id"] for m in manifest}))
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[1])
     sub = parser.add_subparsers(dest="command", required=True)
@@ -164,8 +245,12 @@ def main():
     d.add_argument("--n_shards", type=int, default=1)
     d.add_argument("--workers", type=int, default=4)
     d.add_argument("--limit", type=int, default=None)
+    b = sub.add_parser("bench")
+    b.add_argument("--output", required=True)
+    b.add_argument("--exclude_clips_dir", default=None,
+                   help="Existing clips (<person>/<video_id>__*.mp4); bench clips from the same videos are skipped.")
     args = parser.parse_args()
-    sample(args) if args.command == "sample" else download(args)
+    {"sample": sample, "download": download, "bench": bench}[args.command](args)
 
 
 if __name__ == "__main__":
