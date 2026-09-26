@@ -27,6 +27,9 @@ should become their own decisions/ record.
   concrete L1 encode/decode spec with its acceptance criteria (L1 now implemented)
 - l2_l3_rollout.md -- staged plan for L2 (action phrases) and L3 (communicative
   intent) on top of the implemented L1, with a measurable gate per step
+- l2_knowledge_base_retrieval.md -- the L2 design agreed 2026-09-26: data facts,
+  track-level format, exact / phrase-only decode, the four-layer knowledge base and
+  the exemplar-retrieval algorithm (unit selection); step 1 (shell + blink) results
 
 ## milestones/
 Dated snapshots of what was achieved: numbers, data locations, open problems
@@ -36,6 +39,19 @@ and engineering_log/.
 - 2026-09-23_l1_audio_talkvid.md -- L1 text layer, the 04_audio sidecar and
   the first multi-speaker TalkVid batch (206 clips); open problems and the
   decisions waiting on the owner
+- 2026-09-26_detail_net_l2.md -- detail network v0 (lives outside this repo),
+  mirror augmentation and learning curve, the L2 phrase layer (6 phrase types,
+  lossless round trip), knowledge base layers 1-3 and exemplar retrieval v1,
+  verified head-rotation signs; open problems and pending decisions
+
+## kb/
+The L2 knowledge base's hand-curated layers (layer 1 lives in
+schemas/l2_vocabulary.json; layers 3-4 are run artifacts under <run>/l2/kb/).
+
+- priors.json -- layer 2: literature priors, each with source, how it was
+  verified, and the comparison with this corpus
+- references.md -- every article used for L2, the knowledge base and the
+  retrieval algorithm, with what it was used for and how it was checked
 
 ## decisions/
 Standalone technical decision records (Architecture Decision Record style:
