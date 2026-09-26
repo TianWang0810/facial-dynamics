@@ -1,0 +1,68 @@
+{
+  "kb_layer": 2,
+  "version": "0.1.0",
+  "description": "Literature priors for the L2 vocabulary (docs/plans/l2_knowledge_base_retrieval.md section 5). Every entry cites a source that was looked up, says how it was verified, and compares against this corpus where a comparison is meaningful. Plan D5: when a prior and the corpus disagree, the corpus wins for this tracker and the disagreement is recorded here. Priors are never read by encode or exact decode.",
+  "corpus": "runs/talkvid-train207__20260923T200526Z__24ffdd5, L2 vocabulary 0.2.0 (talking heads, 206 speakers, 3180 described s)",
+  "entries": [
+    {
+      "id": "blink_rate_conversation",
+      "applies_to": {"phrase": "blink", "param": "rate per minute"},
+      "claim": "Spontaneous blink rate depends on the task: mean 17 blinks/min at rest, 26 during conversation, 4.5 while reading (150 healthy adults, video); conversation > rest in 67.3% of subjects.",
+      "value": {"rest": 17, "conversation": 26, "reading": 4.5}, "unit": "blinks/min",
+      "source": {"authors": "Bentivoglio AR, Bressman SB, Cassetta E, Carretta D, Tonali P, Albanese A", "year": 1997,
+                 "title": "Analysis of blink rate patterns in normal subjects", "venue": "Movement Disorders 12(6):1028-1034",
+                 "url": "https://pubmed.ncbi.nlm.nih.gov/9399231/"},
+      "verified": "abstract values via web search, 2026-09-26",
+      "confidence": "high",
+      "corpus_check": {"value": "median 28.4 blinks/min per speaker (p10 7.1, p90 53.1)", "status": "consistent with the conversation value"}
+    },
+    {
+      "id": "blink_duration",
+      "applies_to": {"phrase": "blink", "param": "duration"},
+      "claim": "Reported spontaneous blink durations differ widely between studies because 'duration' is defined differently (closing phase only vs. full closure-reopening, search coil vs. video). Example: 77.6 +/- 10.0 ms for spontaneous blinks in one magnetic search-coil study, 17.6% shorter than voluntary blinks.",
+      "value": null, "unit": "ms",
+      "source": {"authors": "Baker RS, Abou-Jaoude ES, Napier SM", "year": 2005,
+                 "title": "Kinematic Comparison of Spontaneously Generated Blinks and Voluntary Blinks in Normal Adult Subjects",
+                 "url": "https://journals.sagepub.com/doi/10.1177/074880680502200105"},
+      "verified": "abstract via web search, 2026-09-26; which phase the 77.6 ms covers was NOT confirmed from the full text",
+      "confidence": "low (definition)",
+      "corpus_check": {"value": "median 0.23 s (p10 0.13, p90 0.43), measured as the L1 span above rest + 0.1 at 30 Hz", "status": "not comparable: different definition and a 33 ms grid; do not use as a gate"}
+    },
+    {
+      "id": "duchenne_smile",
+      "applies_to": {"phrase": "smile", "param": "members"},
+      "claim": "A felt (Duchenne) smile combines AU12 (zygomatic major, lip corner puller) with AU6 (orbicularis oculi, cheek raiser); AU12 alone is the non-Duchenne smile.",
+      "value": {"facs": ["AU6", "AU12"]},
+      "source": {"authors": "Ekman P, Davidson RJ, Friesen WV", "year": 1990,
+                 "title": "The Duchenne smile: emotional expression and brain physiology. II",
+                 "venue": "Journal of Personality and Social Psychology",
+                 "url": "https://www.semanticscholar.org/paper/The-Duchenne-smile:-emotional-expression-and-brain-Ekman-Davidson/2d3fa735944906bf59e0406ff3988062d13d2db6"},
+      "verified": "title and AU6+12 definition via web search, 2026-09-26",
+      "confidence": "high",
+      "corpus_check": {"value": "cheekSquintLeft/Right never leave 'none' on this corpus", "status": "conflict with the tracker, corpus wins (D5): smile has AU12 members only; AU6 cannot be observed through MediaPipe's cheekSquint here"}
+    },
+    {
+      "id": "nod_speed",
+      "applies_to": {"phrase": "head_move", "param": "dominant=nod, duration"},
+      "claim": "Conversational nods split into fast nods (vertical head movement > 1.5 Hz, mainly while listening / receiving information, a likely backchannel) and slower coordinated nods (< 1.5 Hz).",
+      "value": {"boundary_hz": 1.5}, "unit": "Hz",
+      "source": {"authors": "(Research Square preprint)", "year": 2023,
+                 "title": "Head Nodding and Hand Coordination Across Dyads in Different Conversational Contexts",
+                 "url": "https://www.researchsquare.com/article/rs-3526068/v1"},
+      "verified": "abstract-level summary via web search, 2026-09-26; preprint, not peer reviewed",
+      "confidence": "medium",
+      "corpus_check": {"value": "head_move median 1.07 s (p10 0.40); one L2 head_move is one excursion, not one oscillation cycle", "status": "not directly comparable; relevant when head_move gains a repeats/frequency parameter"}
+    },
+    {
+      "id": "listener_head_movement",
+      "applies_to": {"phrase": "head_move", "param": "context"},
+      "claim": "Head movement is more frequent while speaking than while listening; nods are part of the listener's backchannel repertoire.",
+      "value": null,
+      "source": {"authors": "Hadar U, Steiner TJ, Rose FC", "year": 1985,
+                 "title": "Head movement during listening turns in conversation", "venue": "Journal of Nonverbal Behavior"},
+      "verified": "existence and summary via web search, 2026-09-26; full text not read",
+      "confidence": "medium",
+      "corpus_check": {"value": "TalkVid clips are mostly the speaker's turn", "status": "expect many head_move per minute (corpus median 24.8); a listening-turn corpus would show fewer"}
+    }
+  ]
+}
