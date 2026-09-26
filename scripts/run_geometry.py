@@ -28,6 +28,7 @@ sys.path.insert(0, REPO_ROOT)
 from src.common.ids import infer_grouping
 from src.geometry.confidence import build_clip_mask_report
 from src.geometry.gaze import build_backend
+from src.geometry.parquet_io import append_table
 from src.geometry.pipeline import run_clip
 from src.geometry.summarize import build_geometry_metadata, build_quality_report, load_and_flatten
 
@@ -70,6 +71,7 @@ def main():
     # whole dataset before the first write is what limits how much data this can
     # process; a clip at a time is bounded by the longest clip instead.
     writer = None
+    pending = []
     n_rows = 0
     try:
         for mp4_path in mp4_files:
@@ -80,9 +82,7 @@ def main():
                 clip_result = run_clip(mp4_path, args.model_path, gaze_backend, apply_gaze_tanh=args.gaze_tanh)
                 rows = load_and_flatten(clip_result, clip_id, identity=identity)
                 table = pa.Table.from_pandas(pd.DataFrame(rows), preserve_index=False)
-                if writer is None:
-                    writer = pq.ParquetWriter(parquet_path, table.schema)
-                writer.write_table(table)
+                writer = append_table(writer, pending, table, parquet_path)
                 n_rows += len(rows)
 
                 clip_reports.append(build_clip_mask_report(
@@ -107,7 +107,8 @@ def main():
         gaze_backend.close()
 
     if writer is None:
-        print("No clip produced any rows; writing an empty geometry.parquet would hide that.")
+        print("No clip produced a detected face (%d clip(s) with none at all); writing an empty "
+              "geometry.parquet would hide that." % len(pending))
         with open(os.path.join(output_dir, "geometry_quality.json"), "w", encoding="utf-8") as f:
             json.dump({"per_clip": [], "skipped": skipped, "note": "no clip succeeded"}, f, indent=2)
         sys.exit(1)
