@@ -17,7 +17,7 @@ A prior macOS export (`environment.yml`) was removed in the commit that introduc
 this note. It remains in git history if ever needed:
 
 ```bash
-git show 34c1f75:environment/env-v0.1/environment.yml
+git show e61fa70:environment/env-v0.1/environment.yml   # 34c1f75 before the 2026-09-26 history rewrite
 ```
 
 ## Files in This Directory

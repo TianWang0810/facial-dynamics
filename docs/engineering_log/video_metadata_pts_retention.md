@@ -52,7 +52,7 @@ A dropped frame does not produce a small numerical error; it fabricates a
 doubling of facial velocity that never happened. Keep this case in the test
 suite -- it is the most direct evidence for the section 1 rule.
 
-Interim Workaround (commit decf995, since replaced): read_stream_timing() and
+Interim Workaround (commit 5589bba -- decf995 before the 2026-09-26 history rewrite -- since replaced): read_stream_timing() and
 extract_pts() were added to src/observation/pts.py to expose the per-frame array
 pts.py already computed, and scripts/run_dynamics.py took a third argument,
 --clips_dir, re-decoding each source mp4 to recover real timestamps.
@@ -86,7 +86,7 @@ Three reasons, in order of weight:
      That cost only ever grows.
 
 Verified by an A/B against the workaround: the pre-change run_dynamics.py was run
-from a git worktree at decf995 with --clips_dir, the current version from the
+from a git worktree at 5589bba (was decf995) with --clips_dir, the current version from the
 working tree, over the same four clips. The two JSON reports are byte-identical
 (matching md5). Separately, the stored pts_sec was compared value-by-value with a
 fresh decode of each mp4 under exact float equality -- 1625 values, all identical

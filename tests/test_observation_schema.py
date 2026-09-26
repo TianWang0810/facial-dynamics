@@ -2,7 +2,7 @@
 Schema guard for the Observation layer's analyze_video() / merge_results() output.
 
 Originally written to prove that the read_stream_timing() refactor (commit
-07350ac) left analyze_video() bit-identical. It still asserts exactly that, but
+bb620e7, 07350ac before the 2026-09-26 history rewrite) left analyze_video() bit-identical. It still asserts exactly that, but
 is now also the record of every *deliberate* change to the Observation output
 schema: each intentional addition is whitelisted by name, so any unintended
 field appearing or disappearing still fails loudly.
@@ -48,7 +48,7 @@ sys.path.insert(0, REPO_ROOT)
 from src.observation.merge import merge_results
 from src.observation.pts import analyze_video as analyze_video_current
 
-BASELINE_COMMIT = "5f26025"
+BASELINE_COMMIT = "a539c64"  # was 5f26025 before the 2026-09-26 history rewrite (same tree)
 PTS_MODULE_PATH = "src/observation/pts.py"
 
 # Fields present at BASELINE_COMMIT whose name and value are unchanged.
