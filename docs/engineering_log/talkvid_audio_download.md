@@ -135,3 +135,25 @@ split over the combined set is therefore video-disjoint, and only approximately 
 
 Takeaway: before concluding a dataset is YouTube-only, list its repository tree; benchmarks are
 often hosted in full even when the training set is metadata only.
+
+## Issue 8 (2026-09-26): a clip with no face at all broke the geometry parquet writer
+
+Symptom: in `talkvid-combined__20260926T195604Z__3c445bd`, 7 TalkVid-bench clips were skipped by
+Geometry as `extraction_failed` with "Table schema does not match schema used to create file".
+
+Root cause: `run_geometry.py` builds each clip's table with `pa.Table.from_pandas()` and opens the
+ParquetWriter with the FIRST clip's inferred schema. When MediaPipe detects no face in any frame,
+every per-frame column is None, pandas -> arrow infers `null` types, and the open file rejects the
+table. Worse, had such a clip come first, the file schema itself would have been null-typed and every
+later clip would have failed.
+
+Fix: `src/geometry/parquet_io.py:append_table()` holds null-typed tables until a typed schema exists
+and casts every table to the file schema. A faceless clip is now kept (detected = False) and rejected
+by Features as `low_detection_rate`, with a reason code, instead of vanishing in Geometry. Pinned by
+`tests/test_geometry_parquet_io.py` (both orders) and checked on the real failing clip processed first.
+
+Impact on the combined run: none on the kept data (the 7 clips have detection rate 0 and would be
+rejected either way); only the bookkeeping changes. Not re-run.
+
+Takeaway: a writer whose schema is inferred from data inherits the data's degenerate cases; any
+all-missing input is the first thing to test.
