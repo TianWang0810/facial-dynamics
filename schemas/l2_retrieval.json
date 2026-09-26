@@ -1,0 +1,11 @@
+{
+  "retrieval_version": "0.1.0",
+  "description": "Parameters of exemplar retrieval for phrase-only L2 -> L1 decode (src/semantic/l2_retrieval.py; docs/plans/l2_knowledge_base_retrieval.md section 6). First version: target cost only, no join cost / Viterbi yet. Initial values, not fitted.",
+  "weights": {"duration": 1.0, "channel_dev": 1.0, "keypoints": 1.0, "rest": 0.5},
+  "filter": {"max_duration_ratio": 1.5},
+  "transform": {
+    "scale_clip": [0.25, 4.0],
+    "min_plateau": {"blendshape": 0.02, "headpose_rotation_6d": 0.5, "gaze": 0.003, "headpose_translation": 0.05},
+    "note": "a member whose exemplar plateau is below min_plateau (in its channel's units) is shifted, not scaled: dividing by a near-zero plateau would amplify noise"
+  }
+}

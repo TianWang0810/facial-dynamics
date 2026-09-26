@@ -1,0 +1,87 @@
+{
+  "vocabulary_version": "0.2.1",
+  "applies_to_l1_rules_version": "1.0.0",
+  "description": "Authoritative vocabulary for the L2 action-phrase layer (docs/plans/l2_knowledge_base_retrieval.md) and layer 1 of its knowledge base. src/semantic/l2.py loads and validates this file at import; no Python file restates a threshold. Detection runs on a TRACK-level L1 text (one clip segment), on refined L1 values relative to the track's rest value, so every event boundary falls on an L1 segment boundary. Channel references are L1 text channel names, or '<text channel>.<axis>' for the jointly quantized head rotation. dev_* are in the channel's own units: blendshape activation, degrees of rotation vector about the track reference, or the gaze backend's unit.",
+  "rest": {
+    "method": "median",
+    "decimals": 4,
+    "note": "per L1 text channel: median of the refined L1 value over the track's described frames; head_rotation per rotation-vector component about the track reference. A per-track statistic, not an identity model (plan D1)."
+  },
+  "detector_semantics": {
+    "excursion": "per driver, runs of frames at >= dev_low away from rest (one sign at a time when sign='signed') that reach dev_high; overlapping runs of all drivers form one candidate, kept if min_seconds <= duration <= max_seconds and every member channel is described over the span. Parameters are read at the strongest driver's extreme: its L1 level (peak), direction, onset/offset, and every member's mean deviation over those frames (channel_dev). Phrases claim their members' text channels; a lower-priority phrase overlapping a claim is rejected."
+  },
+  "phrases": {
+    "blink": {
+      "priority": 100,
+      "detector": "excursion",
+      "facs": {"codes": ["AU45"], "note": "blink: brief closure and reopening"},
+      "drivers": ["eyeBlinkLeft", "eyeBlinkRight"],
+      "members": ["eyeBlinkLeft", "eyeBlinkRight"],
+      "pairs": [["eyeBlinkLeft", "eyeBlinkRight"]],
+      "sign": "positive",
+      "detect": {"dev_low": 0.1, "dev_high": 0.2, "min_seconds": 0.0667, "max_seconds": 0.6},
+      "template": {"method": "trapezoid", "onset_fraction": 0.4, "offset_fraction": 0.4},
+      "audit": "2026-09-26: 8/8 sampled detections were real closures on the video"
+    },
+    "lids_lowered": {
+      "priority": 90,
+      "detector": "excursion",
+      "facs": {"codes": ["AU41", "AU42", "AU43", "AU64"], "note": "sustained lid lowering. Deliberately ONE type: on 30 visually labelled candidates (2026-09-26) eyes-closed and looking-down overlapped on every L1 feature (eyeBlink, eyeLookDown, gaze pitch, head pitch); MediaPipe raises eyeBlink for both, so L1 cannot separate them"},
+      "drivers": ["eyeBlinkLeft", "eyeBlinkRight"],
+      "members": ["eyeBlinkLeft", "eyeBlinkRight"],
+      "pairs": [["eyeBlinkLeft", "eyeBlinkRight"]],
+      "sign": "positive",
+      "detect": {"dev_low": 0.1, "dev_high": 0.2, "min_seconds": 0.6, "max_seconds": 30.0},
+      "template": {"method": "trapezoid", "onset_fraction": 0.15, "offset_fraction": 0.15}
+    },
+    "smile": {
+      "priority": 80,
+      "detector": "excursion",
+      "facs": {"codes": ["AU12"], "note": "lip corner puller (mouthSmile*). AU6 (cheek raise) would mark a Duchenne smile, but cheekSquint* never leaves 'none' on this data, so it is not a member"},
+      "drivers": ["mouthSmileLeft", "mouthSmileRight"],
+      "members": ["mouthSmileLeft", "mouthSmileRight"],
+      "pairs": [["mouthSmileLeft", "mouthSmileRight"]],
+      "sign": "positive",
+      "detect": {"dev_low": 0.1, "dev_high": 0.2, "min_seconds": 0.3, "max_seconds": 20.0},
+      "template": {"method": "trapezoid", "onset_fraction": 0.25, "offset_fraction": 0.25},
+      "note": "min_seconds 0.3 keeps most speech-shaped lip spreading out (plan D3)"
+    },
+    "brow_raise": {
+      "priority": 70,
+      "detector": "excursion",
+      "facs": {"codes": ["AU1", "AU2"], "note": "inner (browInnerUp) and outer (browOuterUp*) brow raiser"},
+      "drivers": ["browInnerUp", "browOuterUpLeft", "browOuterUpRight"],
+      "members": ["browInnerUp", "browOuterUpLeft", "browOuterUpRight"],
+      "pairs": [["browOuterUpLeft", "browOuterUpRight"]],
+      "sign": "positive",
+      "detect": {"dev_low": 0.1, "dev_high": 0.2, "min_seconds": 0.2, "max_seconds": 10.0},
+      "template": {"method": "trapezoid", "onset_fraction": 0.3, "offset_fraction": 0.3}
+    },
+    "head_move": {
+      "priority": 60,
+      "detector": "excursion",
+      "facs": {"codes": ["AU51", "AU52", "AU53", "AU54", "AU55", "AU56"], "note": "head turn / up-down / tilt; one type because the three axes co-move and share one jointly quantized L1 channel"},
+      "drivers": ["head_rotation.x", "head_rotation.y", "head_rotation.z"],
+      "members": ["head_rotation.x", "head_rotation.y", "head_rotation.z"],
+      "dominant_names": {"head_rotation.x": "nod", "head_rotation.y": "turn", "head_rotation.z": "tilt"},
+      "direction_names": {"head_rotation.x": {"+": "down", "-": "up"}, "head_rotation.y": {"+": "image_right", "-": "image_left"}},
+      "sign": "signed",
+      "detect": {"dev_low": 2.0, "dev_high": 4.0, "min_seconds": 0.2, "max_seconds": 5.0},
+      "template": {"method": "trapezoid", "onset_fraction": 0.35, "offset_fraction": 0.35},
+      "note": "direction is the sign of the rotation-vector component about the track reference. Verified on video 2026-09-26 (runs/_scratch/l2_headsign.py: nose tip minus eye midpoint, / eye distance, peak vs 0.2 s before, fresh MediaPipe landmarks, 58 moderate events per axis): x+ moves the nose DOWN in the image (corr +0.83, sign agreement 91%) so x+ = head down; y+ moves the nose to the image RIGHT (corr +0.78, 98%). z (tilt) is not verified and has no direction name. An earlier guess from 4 lid-audit rows (x- = down) was wrong."
+    },
+    "gaze_shift": {
+      "priority": 50,
+      "detector": "excursion",
+      "facs": {"codes": ["AU61", "AU62", "AU63", "AU64"], "note": "eyes turn left/right/up/down; drivers are the gaze track (never eyeLook*), eyeLook* are members because they move with it"},
+      "drivers": ["gaze_yaw", "gaze_pitch"],
+      "members": ["gaze_yaw", "gaze_pitch", "eyeLookInLeft", "eyeLookInRight", "eyeLookOutLeft", "eyeLookOutRight",
+                  "eyeLookUpLeft", "eyeLookUpRight", "eyeLookDownLeft", "eyeLookDownRight"],
+      "direction_names": {"gaze_pitch": {"+": "up", "-": "down"}, "gaze_yaw": {"+": "image_right", "-": "image_left"}},
+      "sign": "signed",
+      "detect": {"dev_low": 0.01, "dev_high": 0.03, "min_seconds": 0.2, "max_seconds": 10.0},
+      "template": {"method": "trapezoid", "onset_fraction": 0.2, "offset_fraction": 0.2},
+      "note": "thresholds are the iris proxy's L1 edges (slight 0.01, moderate 0.03); a radians backend needs its own values. Direction names follow src/geometry/gaze.py: yaw = iris offset along image x, pitch = minus image y (up is positive); one audit row (pitch+, eyes clearly up) agrees"
+    }
+  }
+}
