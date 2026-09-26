@@ -103,7 +103,7 @@ clip, window @60):
 | Audio conditioning sidecar | ✅ | 80-bin log-mel + waveform, row-aligned to video windows by real time (not part of the 63 dims) |
 | L1 encode / decode / evaluation | ✅ | 57 text channels; all 7 structural checks pass |
 | Multi-speaker data | 🟡 | TalkVid, 206 speakers, 6245 windows (~50 min); target ~1500 clips |
-| L2 action phrases | 📋 | Rule-based seed vocabulary (blink / jaw_open / smile / brow_raise / nod), then data-driven expansion |
+| L2 action phrases | 🟡 | 6 phrase types (blink, lids_lowered, smile, brow_raise, head_move, gaze_shift) on a track-level L1; lossless round trip; knowledge base + exemplar retrieval v1 — see [`docs/milestones/2026-09-26_detail_net_l2.md`](docs/milestones/2026-09-26_detail_net_l2.md) |
 | L3 communicative intent | 📋 | First test axis independence with weak labels, then fix the axes; the generative model trains in the modelling repo |
 | Input adapters and retargeting for other targets | 📋 | 3D / anime / games / robots |
 
